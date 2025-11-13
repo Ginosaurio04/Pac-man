@@ -49,7 +49,13 @@ private:
     // Cuenta cuántas vidas extra ya se han otorgado por alcanzar múltiplos de 10000 puntos
     int extraLivesAwarded;
 
-    // Laberinto inicial (19x19) — pared derecha corregida, atajos desbloqueados según mapa original
+    // Nivel y señal para mostrar mensaje de pase de nivel
+    int nivel;
+    bool showLevelUp;
+    chrono::steady_clock::time_point levelUpEnd;
+    const int levelUpDisplayMs = 1000; // milisegundos que muestra el mensaje
+
+    // Laberinto inicial (19x19)
     vector<string> laberintoBase = {
         "###################",
         "#.................#",
@@ -120,7 +126,6 @@ private:
             int delta = awardedNow - extraLivesAwarded;
             vidas += delta;
             extraLivesAwarded = awardedNow;
-            // (Opcional) mostrar feedback inmediato -- evitamos prints extra para no degradar rendimiento.
         }
     }
 
@@ -161,7 +166,7 @@ private:
         }
 
         if (puntosRestantes == 0) {
-            // Nivel completado
+            // Nivel completado -> avanzar de nivel
             reiniciarNivel();
         }
     }
@@ -267,12 +272,26 @@ private:
     }
 
     void reiniciarNivel() {
+        // Aumentar nivel, mostrar mensaje de pase de nivel durante levelUpDisplayMs
+        nivel++;
+        showLevelUp = true;
+        levelUpEnd = chrono::steady_clock::now() + chrono::milliseconds(levelUpDisplayMs);
+
         inicializarLaberinto();
         reiniciarPosiciones();
     }
 
 public:
-    PacmanGame() : puntuacion(0), vidas(3), juegoActivo(true), powerMode(false), powerTimer(0), extraLivesAwarded(0) {
+    PacmanGame()
+        : puntuacion(0),
+          vidas(3),
+          juegoActivo(true),
+          powerMode(false),
+          powerTimer(0),
+          extraLivesAwarded(0),
+          nivel(1),
+          showLevelUp(false),
+          levelUpEnd(chrono::steady_clock::now()) {
         srand(static_cast<unsigned int>(time(nullptr)));
         inicializarLaberinto();
         reiniciarPosiciones(); // colocar pacman y fantasmas una sola vez al construir
@@ -283,6 +302,8 @@ public:
         puntuacion = 0;
         vidas = 3;
         extraLivesAwarded = 0;
+        nivel = 1;
+        showLevelUp = false;
         juegoActivo = true;
         powerMode = false;
         powerTimer = 0;
@@ -290,16 +311,21 @@ public:
         reiniciarPosiciones();    // coloca pacman y fantasmas en posiciones iniciales
     }
 
-    void dibujar() {
+    // dibujar ahora recibe fps opcional para mostrarlo
+    void dibujar(int fps = -1) {
         // Evitar system("cls") por ser lento: reposicionar cursor al origen para sobrescribir pantalla
         HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
         COORD origin = { 0, 0 };
         SetConsoleCursorPosition(hConsole, origin);
 
-        // Imprimir cabecera
-        cout << "PACMAN - Puntuacion: " << puntuacion << " - Vidas: " << vidas;
+        // Imprimir cabecera con FPS y Nivel si está disponible
+        cout << "PACMAN - Puntuacion: " << puntuacion << " - Vidas: " << vidas << " - Nivel: " << nivel;
         if (powerMode) cout << " - POWER MODE!";
+        if (fps >= 0) {
+            cout << " - FPS: " << fps;
+        }
         cout << "                              " << endl; // padding para limpiar restos
+
         // Dibujar laberinto y entidades
         for (int y = 0; y < HEIGHT; y++) {
             for (int x = 0; x < WIDTH; x++) {
@@ -355,6 +381,19 @@ public:
 
         cout << "Controles: Flechas/WASD(mover), Q(salir), R(reiniciar)           " << endl;
 
+        // Mostrar mensaje "Has pasado de nivel" mientras corresponda
+        if (showLevelUp) {
+            auto now = chrono::steady_clock::now();
+            if (now < levelUpEnd) {
+                SetConsoleTextAttribute(hConsole, FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+                cout << "¡Has pasado al nivel " << nivel << "!                               " << endl;
+                SetConsoleTextAttribute(hConsole, 7);
+            } else {
+                // Tiempo cumplido -> ocultar mensaje
+                showLevelUp = false;
+            }
+        }
+
         if (!juegoActivo) {
             cout << "GAME OVER! Puntuacion final: " << puntuacion << "                         " << endl;
         }
@@ -406,6 +445,11 @@ int main() {
     auto ultimoInput = chrono::steady_clock::now();
     int inputDelay = 80; // delay entre inputs
 
+    // Variables para medir FPS
+    int frames = 0;
+    int currentFPS = 0;
+    auto fpsTimer = chrono::steady_clock::now();
+
     cout << "BIENVENIDO A PACMAN!" << endl;
     cout << "Recolecta todos los puntos y evita a los fantasmas!" << endl;
     cout << "Los power pellets te permiten comer fantasmas temporalmente." << endl;
@@ -445,7 +489,16 @@ int main() {
         }
 
         // Dibujar (rápido: reposicionar cursor en lugar de clear completo)
-        juego.dibujar();
+        juego.dibujar(currentFPS);
+        frames++;
+
+        // Actualizar contador de FPS cada segundo
+        auto nowFPS = chrono::steady_clock::now();
+        if (chrono::duration_cast<chrono::seconds>(nowFPS - fpsTimer).count() >= 1) {
+            currentFPS = frames;
+            frames = 0;
+            fpsTimer = nowFPS;
+        }
 
         // Mantener latencia baja sin consumir CPU al 100%
         this_thread::sleep_for(chrono::milliseconds(16)); // ~60 FPS de render
